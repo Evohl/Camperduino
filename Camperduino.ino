@@ -1,9 +1,10 @@
 #include <U8g2lib.h>
 #include <RTClib.h>
 #include "DHT.h"
+#include <SoftwareSerial.h>
 
-// Serial output for debugging 0 = off; 2 = GasSensor; 3 = Controller ; 4 = Ultrsonic
-int debug = 2;
+// Serial output for debugging 0 = off; 1 = BLE; 2 = GasSensor; 3 = Controller ; 4 = Ultrsonic
+int debug = 1;
 
 #define LCDWidth                        u8g2.getDisplayWidth()
 #define ALIGN_CENTER(t)                 ((LCDWidth - (u8g2.getUTF8Width(t))) / 2)
@@ -121,7 +122,13 @@ static const unsigned char nocon_bits[] U8X8_PROGMEM  = {
 #define TempSensorPin 26
 #define tempwarnlevel 5
 
+//
 RTC_DS3231 rtc;
+
+// Bluetooth
+HardwareSerial SerialBT = Serial3;
+String readData = "";  
+char sendData = "";
 
 // Ultrasonic
 static short echoPin = 17;
@@ -195,8 +202,54 @@ int yearnow;
 int monthnow;
 int daynow;
 int timesetupstate;
-void TempWarn() {
 
+void ListenBLE(){
+   if (SerialBT.available()){      // Daten liegen an
+      readData = SerialBT.read(); // Nachricht lesen
+      Serial.print(readData);
+   }  
+   while (Serial.available() ) {  
+    sendData = Serial.read();  
+    if (sendData != 0) {           // Read user input if available.
+      delay(10);
+      Serial.print(sendData);
+      SerialBT.write(sendData);    
+    } 
+   }
+   sendData = 0;
+}
+
+long bauds[] = {
+    // major 
+    9600, 57600, 115200,
+    
+    // others
+    19200, 38400, 4800, 2400, 1200, 230400
+  };
+
+bool detectBleBaudRate() {
+  Serial.println("Detecting BLE baud rate:");
+  for (int i=0; i<(sizeof(bauds)/sizeof(long)); i++) {
+    Serial.write("Checking ");
+    long cur_baud = bauds[i];
+    Serial.println(cur_baud, DEC);
+    
+    SerialBT.begin(cur_baud);
+    SerialBT.write("AT");
+    SerialBT.flush();
+    delay(50);
+    String response = SerialBT.readString();
+    if (response == "OK") {
+      Serial.println("Detected");
+      return true;
+    } else {
+       SerialBT.end();
+    }
+  }
+  return false;
+}
+
+void TempWarn() {
 }
 
 void u8g2_prepare(void) {
@@ -393,7 +446,7 @@ void Info() {
 
 void setup() {
   // put your setup code here, to run once:
-  Serial.begin(115200);
+  Serial.begin(9600);
   u8g2.begin();
   dht11.begin();
   About();
@@ -406,6 +459,10 @@ void setup() {
   tone(channel, 2500);
   delay(100);
   noTone(channel);
+  if (detectBleBaudRate())
+    Serial.write("Ready, type AT commands\n\n");
+  else
+    Serial.write("Not ready. Halt");
   delay(2000);
   pinMode(trigPin, OUTPUT); // Sets the trigPin as an OUTPUT
   pinMode(echoPin, INPUT); // Sets the echoPin as an INPUT
@@ -464,7 +521,7 @@ void loop() {
   if (State == 7) {
     tone(channel, freq);
   }
-
+  ListenBLE();
   if(State == 0){
     int gassensorAnalog = analogRead(Gas_analog);
     int gassensorDigital = digitalRead(Gas_digital);
